@@ -216,6 +216,11 @@ namespace Artisan.Autocraft
                 }
 
                 ImGuiComponents.HelpMarker("Will set ingredients for you, to maximise the amount of crafts possible.");
+
+                if (ImGui.Checkbox("Exit Crafting Stance After Completion", ref P.Config.ExitCraftStanceEndurance))
+                {
+                    P.Config.Save();
+                }
             }
             catch { }
         }
@@ -274,6 +279,9 @@ namespace Artisan.Autocraft
                     SoundPlayer.PlaySound();
 
                 ToggleEndurance(false);
+
+                if (P.Config.ExitCraftStanceEndurance)
+                    PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), default));
             }
         }
 
@@ -297,13 +305,15 @@ namespace Artisan.Autocraft
                     return;
                 }
 
-                if (P.Config.CraftingX && P.Config.CraftX == 0 || PreCrafting.GetNumberCraftable(recipe) == 0)
+                if ((P.Config.CraftingX && P.Config.CraftX == 0) || PreCrafting.GetNumberCraftable(recipe) == 0)
                 {
+                    Svc.Log.Debug($"Run out items to craft {P.Config.CraftingX} {P.Config.CraftX} {PreCrafting.GetNumberCraftable(recipe)}");
                     ToggleEndurance(false);
                     P.Config.CraftingX = false;
-                    DuoLog.Information("Craft X has completed.");
                     if (P.Config.PlaySoundFinishEndurance)
                         SoundPlayer.PlaySound();
+                    if (P.Config.ExitCraftStanceEndurance)
+                        PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), default));
 
                     return;
                 }
@@ -369,7 +379,8 @@ namespace Artisan.Autocraft
                     {
                         if (!P.TM.IsBusy && !PreCrafting.Occupied())
                         {
-                            P.TM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200))));
+                            if (needManual || needSquadronManual)
+                                P.TM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200))));
                             P.TM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskUseConsumables(config, type), TimeSpan.FromMilliseconds(200))));
                             P.TM.DelayNext(100);
                         }

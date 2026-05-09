@@ -10,7 +10,7 @@
     "crafting"
   ],
   "RepoUrl": "https://github.com/PunishXIV/Artisan",
-  "DalamudApiLevel": 14,
+  "DalamudApiLevel": 15,
   "DownloadLinkTesting": "https://love.puni.sh/plugins/Artisan/Testing/latest.zip",
-  "ChangeLog": "- 7.41 preliminary update."
+  "ChangeLog": "- Fix NPC repairs"
 }

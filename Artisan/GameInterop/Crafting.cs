@@ -40,7 +40,7 @@ public static unsafe class Crafting
         InvalidState, // we're in a state we probably shouldn't be, such as reloading the plugin mid-craft
     }
 
-    public static State CurState { get; private set; } = State.InvalidState;
+    public static State CurState { get; set; } = State.InvalidState;
     public static event Action<State>? StateChanged;
 
     public static Recipe? CurRecipe { get; private set; }
@@ -83,7 +83,7 @@ public static unsafe class Crafting
 
     public static void Dispose()
     {
-        _craftingEventHandlerUpdateHook.Dispose();
+        _craftingEventHandlerUpdateHook?.Dispose();
     }
 
     // note: this uses current character stats & equipped gear
@@ -122,6 +122,7 @@ public static unsafe class Crafting
             ConditionFlags = (ConditionFlags)lt.ConditionsFlag,
             MissionHasMaterialMiracle = act is (uint)Skills.MaterialMiracle,
             MissionHasSteadyHand = act is (uint)Skills.SteadyHand,
+            CurrentSteadyHandCharges = act is (uint)Skills.SteadyHand ? 2 : 0,
             LevelTable = lt,
         };
 
@@ -153,7 +154,7 @@ public static unsafe class Crafting
 
                 // Satisfaction Supply Recipes
                 case 3:
-                    var satisfactionRow = ECommons.GenericHelpers.FindRow<SatisfactionSupply>(x => x.Item.Value.RowId == recipe.ItemResult.RowId);
+                    var satisfactionRow = ECommons.GenericHelpers.FindSubrow<SatisfactionSupply>(x => x.Item.Value.RowId == recipe.ItemResult.RowId);
                     if (satisfactionRow.HasValue)
                     {
                         res.CraftQualityMin1 = satisfactionRow.Value.CollectabilityLow * 10;
@@ -183,13 +184,18 @@ public static unsafe class Crafting
                     }
                     break;
                 case 7:
-                    res.CraftQualityMin1 = res.CraftQualityMax;
-                    res.CraftQualityMin2 = res.CraftQualityMax;
-                    res.CraftQualityMin3 = res.CraftQualityMax;
+                    var wksRow = GenericHelpers.FindRow<WKSMissionToDoEvalutionRefin>(x => x.RowId == recipe.CollectableMetadata.RowId);
+                    if (wksRow != null)
+                    {
+                        var scale = res.LevelTable.Quality * ((double)res.Recipe.QualityFactor / 100) / 1000;
+                        res.CraftQualityMin1 = (int)Math.Floor(wksRow.Value.Unknown0 * scale) * 10;
+                        res.CraftQualityMin2 = (int)Math.Floor(wksRow.Value.Unknown1 * scale) * 10;
+                        res.CraftQualityMin3 = (int)Math.Floor(wksRow.Value.Unknown2 * scale) * 10;
+                    }
                     break;
                 // Check for any other Generic Collectable
                 default:
-                    var genericRow = ECommons.GenericHelpers.FindRow<CollectablesShopItem>(x => x.Item.Value.RowId == recipe.ItemResult.RowId);
+                    var genericRow = ECommons.GenericHelpers.FindSubrow<CollectablesShopItem>(x => x.Item.Value.RowId == recipe.ItemResult.RowId);
                     if (genericRow is { CollectablesShopRefine: { } breakpoints })
                     {
                         res.CraftQualityMin1 = breakpoints.Value.LowCollectability * 10;
@@ -374,6 +380,10 @@ public static unsafe class Crafting
                 if (CurCraft.Specialist && !EnoughDelinsForCraft(rc, CurCraft, out _))
                     CurCraft.Specialist = false;
 
+                Svc.Log.Debug("Updating Steady Hand Charges");
+                if (CurCraft.MissionHasSteadyHand)
+                    CurCraft.CurrentSteadyHandCharges = SteadyHandCharges();
+
                 if (rc.CurrentSolverType.Contains("Raphael") && !RaphaelCache.HasSolution(CurCraft, out _))
                 {
                     if (RaphaelCache.CLIExists())
@@ -385,7 +395,7 @@ public static unsafe class Crafting
                         Svc.Log.Debug("Raphael set as config but has no solution, generating now...");
                         var raphConfig = RaphaelCache.GetConfigFromTempOrDefault(CurCraft);
 
-                        RaphaelCache.Build(CurCraft, raphConfig);
+                        RaphaelCache.Build(CurCraft, raphConfig, true);
                         return State.WaitStart; // wait for solution to be ready
                     }
                     else
@@ -401,13 +411,13 @@ public static unsafe class Crafting
             if (CurStep.Index != 1 || CurStep.Condition != Condition.Normal || CurStep.PrevComboAction != Skills.None)
                 Svc.Log.Error($"Unexpected initial state: {CurStep}");
 
-            IsTrial = synthWindow->AtkUnitBase.AtkValues[1] is { Type: FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Bool, Byte: 1 };
-            if (CurCraft.IsCosmic)
-            {
-                CurCraft.CraftQualityMin1 = (int)synthWindow->AtkValues[22].UInt * 10;
-                CurCraft.CraftQualityMin2 = (int)synthWindow->AtkValues[23].UInt * 10;
-                CurCraft.CraftQualityMin3 = CurCraft.CraftQualityMax;
-            }
+            IsTrial = synthWindow->AtkUnitBase.AtkValues[1] is { Type: AtkValueType.Bool, Byte: 1 };
+            //if (CurCraft.IsCosmic)
+            //{
+            //    CurCraft.CraftQualityMin1 = (int)synthWindow->AtkValues[22].UInt * 10;
+            //    CurCraft.CraftQualityMin2 = (int)synthWindow->AtkValues[23].UInt * 10;
+            //    CurCraft.CraftQualityMin3 = CurCraft.CraftQualityMax;
+            //}
             CraftStarted?.Invoke(CurRecipe.Value, CurCraft, CurStep, IsTrial);
             return State.InProgress;
         }
@@ -457,7 +467,7 @@ public static unsafe class Crafting
                     return State.WaitAction; // wait for a bit...
                 }
                 // ok, we've been waiting too long - complain and consider current state to be correct
-                Svc.Log.Error($"Unexpected status update - probably a simulator bug:\n" +
+                Svc.Log.Warning($"Unexpected status update - probably a simulator bug:\n" +
                     $"     had {CurStep}\n" +
                     $"expected {_predictedNextStep}\n" +
                     $"     got {step}\n" +
@@ -617,7 +627,7 @@ public static unsafe class Crafting
         }
     }
 
-    public unsafe static uint SteadyHandCharges()
+    public unsafe static int SteadyHandCharges()
     {
         try
         {
@@ -660,6 +670,7 @@ public static unsafe class Crafting
         ret.Durability = GetStepDurability(synthWindow);
         ret.RemainingCP = (int)CharacterInfo.CurrentCP;
         ret.Condition = GetStepCondition(synthWindow);
+        ret.PrevCondition = predictedStep?.PrevCondition ?? Condition.Normal;
         ret.IQStacks = GetStatus(Buffs.InnerQuiet)?.Param ?? 0;
         ret.WasteNotLeft = GetStatus(Buffs.WasteNot2)?.Param ?? GetStatus(Buffs.WasteNot)?.Param ?? 0;
         ret.ManipulationLeft = GetStatus(Buffs.Manipulation)?.Param ?? 0;
@@ -680,9 +691,15 @@ public static unsafe class Crafting
         ret.PrevComboAction = predictedStep?.PrevComboAction ?? Skills.None;
         ret.MaterialMiracleCharges = MaterialMiracleCharges();
         ret.MaterialMiracleActive = GetStatus(Buffs.MaterialMiracle) != null;
+        ret.MaterialMiraclesUsed = predictedStep?.MaterialMiraclesUsed ?? 0;
+        ret.MaterialMiracleSecondsLeft = GetStatus(Buffs.MaterialMiracle) != null ? GetStatus(Buffs.MaterialMiracle).RemainingTime : 0;
+        ret.PrevMaterialMiracleActive = predictedStep?.PrevMaterialMiracleActive ?? false;
         ret.SteadyHandCharges = SteadyHandCharges();
         ret.SteadyHandLeft = GetStatus(Buffs.SteadyHand)?.Param ?? 0;
+        ret.SteadyHandsUsed = predictedStep?.SteadyHandsUsed ?? 0;
         ret.ObserveCounter = predictedStep?.ObserveCounter ?? 0;
+        ret.ExpertEmergency = predictedStep?.ExpertEmergency ?? false;
+        ret.ExpertMiracleTrigger = predictedStep?.ExpertMiracleTrigger ?? false;
 
         return ret;
     }

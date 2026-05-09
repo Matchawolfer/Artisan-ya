@@ -2,6 +2,7 @@
 using Artisan.CraftingLogic;
 using Artisan.GameInterop;
 using Artisan.Sounds;
+using Dalamud.Game.Chat;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
@@ -26,13 +27,13 @@ namespace Artisan.Autocraft
             Svc.Chat.ChatMessage += ScanForHQItems;
         }
 
-        private static void ScanForHQItems(XivChatType type, int timestamp, ref SeString sender, ref SeString message, ref bool isHandled)
+        private static void ScanForHQItems(IHandleableChatMessage handler)
         {
-            if (type == (XivChatType)2242 && Svc.Condition[ConditionFlag.Crafting])
+            if (handler.LogKind == (XivChatType)2242 && Svc.Condition[ConditionFlag.Crafting])
             {
-                if (message.Payloads.Any(x => x.Type == PayloadType.Item))
+                if (handler.Message.Payloads.Any(x => x.Type == PayloadType.Item))
                 {
-                    var item = (ItemPayload)message.Payloads.First(x => x.Type == PayloadType.Item);
+                    var item = (ItemPayload)handler.Message.Payloads.First(x => x.Type == PayloadType.Item);
                     if (Svc.Data.Excel.GetSheet<Item>().GetRow(item.Item.RowId).CanBeHq)
                     {
                         if (Endurance.Enable && P.Config.EnduranceStopNQ && !item.IsHQ)
@@ -100,7 +101,9 @@ namespace Artisan.Autocraft
                         Endurance.ToggleEndurance(false);
                         if (P.Config.PlaySoundFinishEndurance)
                             SoundPlayer.PlaySound();
-                        DuoLog.Information("Craft X has completed.");
+
+                        if (P.Config.ExitCraftStanceEndurance)
+                            PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), default));
 
                     }
                 }

@@ -26,6 +26,9 @@ namespace Artisan.Autocraft
     {
         internal static void Repair()
         {
+            if (TryGetAddonByName<AddonSelectYesno>("SelectYesno", out var yesNo) && yesNo->IsVisible)
+                return;
+
             if (TryGetAddonByName<AddonRepair>("Repair", out var addon) && addon->AtkUnitBase.IsVisible && addon->RepairAllButton->IsEnabled && Throttler.Throttle(500))
             {
                 new AddonMaster.Repair((IntPtr)addon).RepairAll();
@@ -94,7 +97,7 @@ namespace Artisan.Autocraft
                     if (item->Condition < ret) ret = item->Condition;
                 }
             }
-            return (int)Math.Ceiling((double)ret / 300);
+            return (int)Math.Floor((double)ret / 300);
         }
 
         internal static bool CanRepairAny(int repairPercent = 0)
@@ -176,7 +179,7 @@ namespace Artisan.Autocraft
                     Callback.Fire(&addonSelectIconString->AtkUnitBase, true, index);
                 }
 
-                if (TryGetAddonByName<AddonRepair>("AddonRepair", out var addonRepair))
+                if (TryGetAddonByName<AddonRepair>("Repair", out var addonRepair))
                 {
                     return true;
                 }
@@ -195,11 +198,11 @@ namespace Artisan.Autocraft
                 if (TryGetAddonByName<AddonRepair>("Repair", out var r) && r->AtkUnitBase.IsVisible)
                 {
                     if (DateTime.Now < _nextRetry) return false;
-                    if (!Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.Occupied39])
+                    if (!r->RepairAllButton->IsEnabled)
                     {
                         if (DebugTab.Debug) Svc.Log.Verbose("Repair visible");
                         if (DebugTab.Debug) Svc.Log.Verbose("Closing repair window");
-                        ActionManagerEx.UseRepair();
+                        r->Close(true);
                     }
                     _nextRetry = DateTime.Now.Add(TimeSpan.FromMilliseconds(1000));
                     return false;
@@ -213,12 +216,13 @@ namespace Artisan.Autocraft
             {
                 if (!repairAddon->RepairAllButton->IsEnabled)
                 {
-                    ActionManagerEx.UseRepair();
+                    repairAddon->Close(true);
                     _nextRetry = DateTime.Now.Add(TimeSpan.FromMilliseconds(1000));
                     return false;
                 }
 
-                if (!Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.Occupied39])
+                var talkingToNPC = Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInQuestEvent];
+                if (repairAddon->RepairAllButton->IsEnabled && (!Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.Occupied39] || talkingToNPC))
                 {
                     ConfirmYesNo();
                     Repair();

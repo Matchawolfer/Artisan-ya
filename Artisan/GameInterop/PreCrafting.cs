@@ -36,13 +36,13 @@ public unsafe static class PreCrafting
     private static long NextTaskAt = 0;
 
     private delegate void ClickSynthesisButton(void* thisPtr, AtkEventType eventType, int eventParam, AtkEvent* atkEvent, AtkEventData* atkEventData);
-    private static Hook<ClickSynthesisButton> _clickButton;
+    private static Hook<ClickSynthesisButton>? _clickButton;
 
-    private delegate void* FireCallbackDelegate(AtkUnitBase* atkUnitBase, int valueCount, AtkValue* atkValues, byte updateVisibility);
-    private static Hook<FireCallbackDelegate> _gearsetCallback;
+    private delegate Boolean FireCallbackDelegate(AtkUnitBase* atkUnitBase, uint valueCount, AtkValue* atkValues, Boolean updateVisibility);
+    private static Hook<FireCallbackDelegate>? _gearsetCallback;
 
     delegate nint AddonWKSRecipeNote_ReceiveEventDelegate(nint a1, ushort a2, uint a3, nint a4, nint a5);
-    private static Hook<AddonWKSRecipeNote_ReceiveEventDelegate> _cosmicCallback;
+    private static Hook<AddonWKSRecipeNote_ReceiveEventDelegate>? _cosmicCallback;
 
     public enum TaskResult { Done, Retry, Abort }
     public static List<(Func<TaskResult> task, TimeSpan retryDelay)> Tasks = new();
@@ -76,7 +76,7 @@ public unsafe static class PreCrafting
         return _cosmicCallback.Original(a1, a2, a3, a4, a5);
     }
 
-    private static void* CallbackDetour(AtkUnitBase* atkUnitBase, int valueCount, AtkValue* atkValues, byte updateVisibility)
+    private static bool CallbackDetour(AtkUnitBase* atkUnitBase, uint valueCount, AtkValue* atkValues, bool updateVisibility)
     {
         var name = atkUnitBase->NameString.TrimEnd();
         if (name.Length >= 11 && name.Substring(0, 11) == "SelectYesno")
@@ -141,26 +141,30 @@ public unsafe static class PreCrafting
             bool needClassChange = requiredClass != CharacterInfo.JobID;
             bool needEquipItem = recipe.ItemRequired.RowId > 0 && (needClassChange || !IsItemEquipped(recipe.ItemRequired.RowId));
             bool needConsumables = NeedsConsumablesCheck(type, config, recipe);
+            bool needsManuals = NeedsManualsCheck(type, config, recipe);
             bool hasConsumables = HasConsumablesCheck(config);
 
             // handle errors when we're forbidden from rectifying them automatically
             if (P.Config.DontEquipItems && needClassChange)
             {
                 DuoLog.Error($"Can't craft {recipe.ItemResult.Value.Name.ToDalamudString()}: wrong class, {requiredClass} needed");
+                PauseOrDisableModes();
                 return;
             }
             if (P.Config.DontEquipItems && needEquipItem)
             {
                 DuoLog.Error($"Can't craft {recipe.ItemResult.Value.Name.ToDalamudString()}: required item {recipe.ItemRequired.Value.Name} not equipped");
+                PauseOrDisableModes();
                 return;
             }
             if (P.Config.AbortIfNoFoodPot && needConsumables && !hasConsumables)
             {
                 MissingConsumablesMessage(recipe, config);
+                PauseOrDisableModes();
                 return;
             }
 
-            bool needExitCraft = Crafting.CurState == Crafting.State.IdleBetween && (needClassChange || needEquipItem || needConsumables);
+            bool needExitCraft = Crafting.CurState == Crafting.State.IdleBetween && (needEquipItem || needsManuals);
 
             // TODO: pre-setup solver for incoming craft
             Tasks.Clear();
@@ -197,7 +201,9 @@ public unsafe static class PreCrafting
                 bool needSquadronManual = config != default && ConsumableChecker.HasItem(config.RequiredSquadronManual, false) && !ConsumableChecker.IsSquadronManualled(config);
 
                 if (needFood || needPot || needManual || needSquadronManual)
+                {
                     Tasks.Add((() => TaskUseConsumables(config, type), default));
+                }
             }
             Tasks.Add((() => TaskSelectRecipe(recipe), TimeSpan.FromMilliseconds(500)));
             timeWasteLoops = 1;
@@ -210,6 +216,15 @@ public unsafe static class PreCrafting
         {
             ex.Log();
         }
+    }
+
+    private static void PauseOrDisableModes()
+    {
+        if (Endurance.Enable)
+            Endurance.ToggleEndurance(false);
+
+        if (CraftingListUI.Processing)
+            CraftingListFunctions.Paused = true;
     }
 
     internal static void MissingConsumablesMessage(Recipe recipe, RecipeConfig? config)
@@ -225,6 +240,14 @@ public unsafe static class PreCrafting
             return false;
 
         return (type == CraftType.Normal || (type == CraftType.Trial && P.Config.UseConsumablesTrial) || (type == CraftType.Quick && P.Config.UseConsumablesQuickSynth)) && (!ConsumableChecker.IsFooded(config) || !ConsumableChecker.IsPotted(config) || !ConsumableChecker.IsManualled(config) || !ConsumableChecker.IsSquadronManualled(config));
+    }
+
+    internal static bool NeedsManualsCheck(CraftType type, RecipeConfig? config, Recipe recipe)
+    {
+        if (ConsumableChecker.SkippingConsumablesByConfig(recipe))
+            return false;
+
+        return (type == CraftType.Normal || (type == CraftType.Trial && P.Config.UseConsumablesTrial) || (type == CraftType.Quick && P.Config.UseConsumablesQuickSynth)) && (!ConsumableChecker.IsManualled(config) || !ConsumableChecker.IsSquadronManualled(config));
     }
 
     internal static bool HasConsumablesCheck(RecipeConfig? config)
@@ -288,9 +311,9 @@ public unsafe static class PreCrafting
             if (int.TryParse(addon->SelectedRecipeQuantityCraftableFromMaterialsInInventory->NodeText.ToString(), out int output))
                 return output;
         }
-        if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmic) && cosmic->UldManager.NodeList[24] != null)
+        if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmic) && cosmic->GetTextNodeById(34) != null)
         {
-            if (int.TryParse(cosmic->UldManager.NodeList[24]->GetAsAtkTextNode()->NodeText.ToString(), out int output))
+            if (int.TryParse(cosmic->GetNodeById(34)->GetAsAtkTextNode()->NodeText.ToString(), out int output))
                 return output;
         }
         return -1;

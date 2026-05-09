@@ -393,7 +393,8 @@ namespace Artisan.CraftingLists
                 {
                     if (!CLTM.IsBusy && !PreCrafting.Occupied())
                     {
-                        CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200))));
+                        if (needManual || needSquadronManual)
+                            CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200))));
                         CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskUseConsumables(config, type), TimeSpan.FromMilliseconds(200))));
                         CLTM.DelayNext(100);
                     }
@@ -491,8 +492,8 @@ namespace Artisan.CraftingLists
             if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmicAddon) &&
                 cosmicAddon->IsVisible)
             {
-                var hqBtn = cosmicAddon->UldManager.NodeList[17]->GetAsAtkComponentButton();
-                var nqBtn = cosmicAddon->UldManager.NodeList[18]->GetAsAtkComponentButton();
+                var hqBtn = cosmicAddon->GetNodeById(40)->GetAsAtkComponentButton();
+                var nqBtn = cosmicAddon->GetNodeById(39)->GetAsAtkComponentButton();
 
                 nqBtn->ClickAddonButton(cosmicAddon);
                 hqBtn->ClickAddonButton(cosmicAddon);

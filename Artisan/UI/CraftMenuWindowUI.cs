@@ -1,21 +1,29 @@
 ﻿using Artisan.Autocraft;
 using Artisan.CraftingLists;
+using Artisan.CraftingLogic;
+using Artisan.CraftingLogic.Solvers;
 using Artisan.GameInterop;
 using Artisan.IPC;
 using Artisan.RawInformation;
+using Artisan.RawInformation.Character;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.Colors;
+using Dalamud.Interface.Components;
 using Dalamud.Interface.Windowing;
 using ECommons.ImGuiMethods;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using static Artisan.CraftingLogic.Solvers.ExpertSolverProfiles;
+using static Artisan.CraftingLogic.Solvers.ExpertSolverSettings;
 
 namespace Artisan.UI
 {
     internal class CraftMenuWindowUI : Window
     {
         public bool EnableMacroOptions { get; set; }
+        public ExpertSolverSettingsUI ExpertSettingsUI = new();
 
         public CraftMenuWindowUI(string windowName, ImGuiWindowFlags flags) : base(windowName, flags)
         {
@@ -60,6 +68,23 @@ namespace Artisan.UI
             P.StylePushed = false;
         }
 
+        public bool SolverIs(RecipeConfig config, string type)
+        {
+            // if no solver is loaded, check the default so things can render correctly
+            bool solverLoaded = config.CurrentSolverType != "";
+            switch (type)
+            {
+                case "standard":
+                    return solverLoaded ? config.SolverIsStandard : !LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert;
+                case "expert":
+                    return solverLoaded ? config.SolverIsExpert : LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert;
+                case "raph":
+                case "raphael":
+                    return solverLoaded ? config.SolverIsRaph : false;
+                default: return false;
+            }
+        }
+
         public override void Draw()
         {
             try
@@ -68,8 +93,15 @@ namespace Artisan.UI
                 {
                     return;
                 }
-
+                var changed = false;
+                var foundRecipe = P.Config.RecipeConfigs.GetValueOrDefault(Endurance.RecipeID);
+                var config = foundRecipe ?? new();
                 var autoMode = P.Config.AutoMode;
+                var expertRecipe = LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert;
+
+                // save a new config entry for expert recipes so per-recipe settings work as expected
+                if (foundRecipe == null && expertRecipe)
+                    changed = true;
 
                 if (ImGui.Checkbox("Automatic Action Execution Mode", ref autoMode))
                 {
@@ -96,30 +128,123 @@ namespace Artisan.UI
                     ImGuiEx.Text(ImGuiColors.DalamudYellow, $"Missing Ingredients:\r\n- {string.Join("\r\n- ", PreCrafting.MissingIngredients(recipe))}");
                 }
 
-                if (Crafting.MaterialMiracleCharges() > 0)
+                ExpertProfile profile = CraftingProcessor.GetExpertProfileForRecipe(config);
+                ExpertSolverSettings expCfg = profile.ID == 0 ? P.Config.ExpertSolverConfig : profile.Settings;
+                if (Crafting.MaterialMiracleCharges() > 0 && (SolverIs(config, "standard") || SolverIs(config, "expert")))
                 {
-                    bool useMatMiracle = LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert ? P.Config.ExpertSolverConfig.UseMaterialMiracle : P.Config.UseMaterialMiracle;
-                    int delayMatMiracle = LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert ? P.Config.ExpertSolverConfig.MinimumStepsBeforeMiracle : P.Config.MinimumStepsBeforeMiracle;
-                    bool multiMatMiracle = P.Config.MaterialMiracleMulti;
-                    if (ImGui.Checkbox("Use Material Miracle", ref useMatMiracle))
+                    int maxMiracles = SolverIs(config, "expert") ? expCfg.OverrideCosmicRecipeSettings ? expCfg.MaxMaterialMiracleUses : (int)config.ExpertMaxMaterialMiracleUses : P.Config.MaxMaterialMiracles;
+                    int delayMatMiracle = SolverIs(config, "expert") ? expCfg.OverrideCosmicRecipeSettings ? expCfg.MinimumStepsBeforeMiracle : (int)config.ExpertMinimumStepsBeforeMiracle : P.Config.MinimumStepsBeforeMiracle;
+                    MMSet useMMWhen = SolverIs(config, "expert") ? expCfg.OverrideCosmicRecipeSettings ? expCfg.UseMMWhen : config.expertUseMMWhen : MMSet.Steps;
+
+                    if (expCfg.OverrideCosmicRecipeSettings && SolverIs(config, "expert"))
                     {
-                        if (LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert)
-                            P.Config.ExpertSolverConfig.UseMaterialMiracle = useMatMiracle;
-                        else
-                            P.Config.UseMaterialMiracle = useMatMiracle;
-                    }
-                    if (ImGui.SliderInt("Minimum steps to execute before trying Material Miracle", ref delayMatMiracle, 0, 20))
-                    {
-                        if (LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert)
-                            P.Config.ExpertSolverConfig.MinimumStepsBeforeMiracle = delayMatMiracle;
-                        else
-                            P.Config.MinimumStepsBeforeMiracle = delayMatMiracle;
+                        ImGui.TextWrapped("These settings are overridden by your current expert profile.\r\nDisable that option to set it for each recipe.");
+                        ImGui.BeginDisabled();
                     }
 
-                    if (false == LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert)
+                    ImGui.PushItemWidth(100);
+                    if (ExpertSettingsUI.SliderIntWithIcons("MaxMaterialMiracles", ref maxMiracles, 0, 3, $"{(SolverIs(config, "expert") ? "[ex] " : "")}Max [s!MaterialMiracle] uses"))
                     {
-                        if (ImGui.Checkbox("Use multiple material miracles", ref multiMatMiracle))
-                            P.Config.MaterialMiracleMulti = multiMatMiracle;
+                        if (SolverIs(config, "expert"))
+                        {
+                            if (expCfg.OverrideCosmicRecipeSettings)
+                                expCfg.MaxMaterialMiracleUses = maxMiracles;
+                            else
+                                config.expertMaxMaterialMiracleUses = (uint)maxMiracles;
+                        }
+                        else
+                            P.Config.MaxMaterialMiracles = maxMiracles;
+                        changed = true;
+                    }
+
+                    if (expCfg.OverrideCosmicRecipeSettings && SolverIs(config, "expert")) ImGui.EndDisabled();
+                    var mmNote = "To change Raphael solver usage, go to Settings > Raphael Solver Settings.";
+                    if (SolverIs(config, "expert"))
+                        ImGuiComponents.HelpMarker($"This setting only applies to the expert solver.\r\n{mmNote}");
+                    if (SolverIs(config, "standard"))
+                        ImGuiComponents.HelpMarker($"This will switch the Standard Recipe Solver over to the Expert Solver for the duration of the buff.\r\n{mmNote}");
+
+                    if (expCfg.OverrideCosmicRecipeSettings && SolverIs(config, "expert")) ImGui.BeginDisabled();
+
+                    if (maxMiracles > 0)
+                    {
+                        if (SolverIs(config, "expert"))
+                        {
+                            ImGui.PushItemWidth(250);
+                            if (ImGui.BeginCombo("##mmSet", expCfg.GetMMSet(useMMWhen)))
+                            {
+                                foreach (MMSet x in Enum.GetValues<MMSet>())
+                                {
+                                    if (ImGui.Selectable(expCfg.GetMMSet(x)))
+                                    {
+                                        if (expCfg.OverrideCosmicRecipeSettings)
+                                            expCfg.UseMMWhen = x;
+                                        else
+                                            config.expertUseMMWhen = x;
+                                        changed = true;
+                                    }
+                                }
+                                ImGui.EndCombo();
+                            }
+                            ImGui.SameLine(0.0f, 4.0f);
+                            ExpertSettingsUI.DrawIconText("[ex] When to start");
+                        }
+                        else
+                            ImGui.Text("Use after this many steps:");
+
+                        if ((SolverIs(config, "expert") && useMMWhen == MMSet.Steps) || SolverIs(config, "standard"))
+                        {
+                            ImGui.PushItemWidth(250);
+                            if (ImGui.SliderInt($"###MaterialMiracleSlider", ref delayMatMiracle, 0, 20))
+                            {
+                                if (SolverIs(config, "expert"))
+                                {
+                                    if (expCfg.OverrideCosmicRecipeSettings)
+                                        expCfg.MinimumStepsBeforeMiracle = delayMatMiracle;
+                                    else
+                                        config.expertMinimumStepsBeforeMiracle = (uint)delayMatMiracle;
+                                }
+                                else
+                                    P.Config.MinimumStepsBeforeMiracle = delayMatMiracle;
+                                changed = true;
+                            }
+                            if (SolverIs(config, "expert"))
+                            {
+                                ImGui.SameLine(0.0f, 4.0f);
+                                ExpertSettingsUI.DrawIconText("[ex] Number of steps");
+                            }
+                        }
+                    }
+                    if (expCfg.OverrideCosmicRecipeSettings && SolverIs(config, "expert")) ImGui.EndDisabled();
+                }
+
+                // todo: should this set the raph setting, not just tell users where to set it?
+                if (Crafting.SteadyHandCharges() > 0)
+                {
+                    if (expertRecipe && SolverIs(config, "expert"))
+                    {
+                        int maxSteady = expCfg.OverrideCosmicRecipeSettings ? expCfg.MaxSteadyUses : (int)config.ExpertMaxSteadyUses;
+
+                        ImGui.PushItemWidth(100);
+                        if (expCfg.OverrideCosmicRecipeSettings && SolverIs(config, "expert"))
+                        {
+                            ImGui.TextWrapped("This setting is overridden by your current expert profile.\r\nDisable that option to set it for each recipe.");
+                            ImGui.BeginDisabled();
+                        }
+                        if (ExpertSettingsUI.SliderIntWithIcons("MaxSteadyUses", ref maxSteady, 0, 2, "[ex] Max [s!SteadyHand] uses"))
+                        {
+                            if (expCfg.OverrideCosmicRecipeSettings)
+                                expCfg.MaxSteadyUses = maxSteady;
+                            else
+                                config.expertMaxSteadyUses = (uint)maxSteady;
+                            changed = true;
+                        }
+                        if (expCfg.OverrideCosmicRecipeSettings) ImGui.EndDisabled();
+                        ImGuiComponents.HelpMarker($"This setting only applies to the expert solver.\r\nTo change Raphael solver usage, go to Settings > Raphael Solver Settings.");
+                    }
+                    else if (config.SolverIsRaph || config.SolverIsStandard)
+                    {
+                        ImGui.TextWrapped($"This mission supports {Skills.SteadyHand.NameOfAction()}. To configure its usage for the Raphael solver, go to Settings > Raphael Solver Settings.");
                     }
                 }
 
@@ -137,15 +262,13 @@ namespace Artisan.UI
                         return;
                     }
 
-                    var config = P.Config.RecipeConfigs.GetValueOrDefault(Endurance.RecipeID) ?? new();
+                    changed |= config.Draw(Endurance.RecipeID);
 
-                    if (!config.Draw(Endurance.RecipeID))
+                    if (changed)
                     {
-                        return;
+                        P.Config.RecipeConfigs[Endurance.RecipeID] = config;
+                        P.Config.Save();
                     }
-
-                    P.Config.RecipeConfigs[Endurance.RecipeID] = config;
-                    P.Config.Save();
                 }
             }
             catch { }

@@ -9,6 +9,7 @@ using Artisan.IPC;
 using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using Artisan.UI;
+using Artisan.UI.KTK;
 using Artisan.Universalis;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Command;
@@ -19,6 +20,7 @@ using ECommons;
 using ECommons.Automation.LegacyTaskManager;
 using ECommons.DalamudServices;
 using ECommons.Logging;
+using KamiToolKit;
 using OtterGui.Classes;
 using PunishLib;
 using System;
@@ -40,14 +42,16 @@ public unsafe class Artisan : IDalamudPlugin
     internal TaskManager CTM;
     internal TextureCache Icons;
     internal UniversalisClient UniversalsisClient;
+    internal NativeCraftAll? NCA;
 
     internal StyleModel Style;
     internal bool StylePushed = false;
 
     public Artisan(IDalamudPluginInterface pluginInterface)
     {
-        ECommonsMain.Init(pluginInterface, this, Module.All);
+        ECommonsMain.Init(pluginInterface, this, Module.DalamudReflector);
         PunishLibMain.Init(pluginInterface, "Artisan", new AboutPlugin() { Sponsor = "https://ko-fi.com/taurenkey" });
+        KamiToolKitLibrary.Initialize(pluginInterface);
         P = this;
 
         LuminaSheets.Init();
@@ -112,7 +116,7 @@ public unsafe class Artisan : IDalamudPlugin
         Svc.Condition.ConditionChange += Condition_ConditionChange;
 
         PluginUi.OpenWindow = OpenWindow.Main;
-
+        NCA = new();
         ConvertCraftingLists();
     }
 
@@ -199,7 +203,7 @@ public unsafe class Artisan : IDalamudPlugin
 
         CharacterInfo.UpdateCharaStats();
         Crafting.Update();
-        SimpleTweaks.DisableImprovedLogTweak();
+        //SimpleTweaks.DisableImprovedLogTweak();
         PreCrafting.Update();
         Endurance.Update();
 
@@ -219,7 +223,7 @@ public unsafe class Artisan : IDalamudPlugin
         }
 
         var raphFinishedTasks = RaphaelCache.Tasks
-            .Where(x => x.Value.Item2.IsCompleted || x.Value.Item2.IsFaulted || x.Value.Item2.IsCanceled)
+            .Where(x => x.Value.Task.IsCompleted || x.Value.Task.IsFaulted || x.Value.Task.IsCanceled)
             .ToList();
 
         foreach (var key in raphFinishedTasks)
@@ -249,20 +253,20 @@ public unsafe class Artisan : IDalamudPlugin
 
         LuminaSheets.Dispose();
 
-        if (!DalamudInfo.IsOnStaging())
-        {
-            CraftingListContextMenu.Dispose();
-            UniversalsisClient.Dispose();
+        CraftingListContextMenu.Dispose();
+        UniversalsisClient.Dispose();
 
-            Svc.Condition.ConditionChange -= Condition_ConditionChange;
-            Svc.Framework.Update -= OnFrameworkUpdate;
-            Svc.ClientState.Logout -= DisableEndurance;
-            Svc.ClientState.Login -= DisableEndurance;
-            Endurance.Dispose();
-            RetainerInfo.Dispose();
-            IPC.IPC.Dispose();
-        }
+        Svc.Condition.ConditionChange -= Condition_ConditionChange;
+        Svc.Framework.Update -= OnFrameworkUpdate;
+        Svc.ClientState.Logout -= DisableEndurance;
+        Svc.ClientState.Login -= DisableEndurance;
+        Endurance.Dispose();
+        RetainerInfo.Dispose();
+        IPC.IPC.Dispose();
+
         ECommonsMain.Dispose();
+        NCA?.Dispose();
+        KamiToolKitLibrary.Dispose();
         P = null!;
     }
 
@@ -412,7 +416,7 @@ public unsafe class Artisan : IDalamudPlugin
             "builder" => OpenWindow.SpecialList,
             "workshop" => OpenWindow.FCWorkshop,
             "sim" => OpenWindow.Simulator,
-            _ => OpenWindow.Overview
+            _ => PluginUi.OpenWindow
         };
     }
 
